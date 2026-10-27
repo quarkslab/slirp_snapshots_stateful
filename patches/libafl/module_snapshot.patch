@@ -1,0 +1,238 @@
+diff --git a/crates/libafl_qemu/src/modules/usermode/snapshot.rs b/crates/libafl_qemu/src/modules/usermode/snapshot.rs
+index c3e188e3..9dfbf537 100644
+--- a/crates/libafl_qemu/src/modules/usermode/snapshot.rs
++++ b/crates/libafl_qemu/src/modules/usermode/snapshot.rs
+@@ -49,7 +49,7 @@ pub struct SnapshotPageInfo {
+     pub data: Option<Box<[u8; SNAPSHOT_PAGE_SIZE]>>,
+ }
+ 
+-#[derive(Default, Debug)]
++#[derive(Default, Debug, Clone)]
+ pub struct SnapshotAccessInfo {
+     pub access_cache: [GuestAddr; 4],
+     pub access_cache_idx: usize,
+@@ -238,6 +238,10 @@ impl SnapshotModule {
+         self.initial_brk = qemu.get_initial_brk();
+         self.mmap_start = qemu.get_mmap_start();
+         self.pages.clear();
++        self.maps.tree.clear();
++        self.maps.size = 0;
++        self.new_maps.lock().unwrap().tree.clear();
++        self.new_maps.lock().unwrap().size = 0;
+         for acc in &mut self.accesses {
+             unsafe { (*acc.get()).clear() };
+         }
+@@ -256,13 +260,22 @@ impl SnapshotModule {
+                     private: map.is_priv(),
+                     data: None,
+                 };
+-                if map.flags().readable() && self.interval_filter.to_zero(addr).is_none() {
+-                    // TODO not just for R pages
++                if self.interval_filter.to_zero(addr).is_none() {
++                    let old_perms = map.flags();
++                    let size = (map.end() - addr) as usize;
++                    if !old_perms.readable() {
++                        qemu.mprotect(addr, size, MmapPerms::Read)
++                            .expect("Could not turn page to readonly during snapshot");
++                    }
+                     unsafe {
+                         info.data = Some(Box::new(core::mem::zeroed()));
+                         qemu.read_mem(addr as GuestAddr, &mut info.data.as_mut().unwrap()[..])
+                             .unwrap();
+                     }
++                    if !old_perms.readable() {
++                        qemu.mprotect(addr, size, old_perms)
++                            .expect("Could not restore page permission during snapshot");
++                    }
+                 }
+                 self.pages.insert(addr as GuestAddr, info);
+                 addr += SNAPSHOT_PAGE_SIZE as u64;
+@@ -434,71 +447,69 @@ impl SnapshotModule {
+     }
+ 
+     pub fn reset(&mut self, qemu: Qemu) {
+-        {
+-            let new_maps = self.new_maps.get_mut().unwrap();
+-
+-            log::debug!("Start restore");
+-
+-            let new_brk = qemu.get_brk();
+-            if new_brk < self.brk {
+-                // The heap has shrunk below the snapshotted brk value. We need to remap those pages in the target.
+-                // The next for loop will restore their content if needed.
+-                let aligned_new_brk = (new_brk + ((SNAPSHOT_PAGE_SIZE - 1) as GuestAddr))
+-                    & (!(SNAPSHOT_PAGE_SIZE - 1) as GuestAddr);
+-                log::debug!(
+-                    "New brk ({:#x?}) < snapshotted brk ({:#x?})! Mapping back in the target {:#x?} - {:#x?}",
+-                    new_brk,
+-                    self.brk,
+-                    aligned_new_brk,
+-                    aligned_new_brk + (self.brk - aligned_new_brk)
+-                );
+-                qemu.map_fixed(
+-                    aligned_new_brk,
+-                    (self.brk - aligned_new_brk) as usize,
+-                    MmapPerms::ReadWrite,
+-                )
+-                .unwrap();
+-            } else if new_brk > self.brk {
+-                // The heap has grown. so we want to drop those
+-                // we want to align the addresses before calling unmap
+-                // although it is very unlikely that the brk has an unaligned value
+-                let new_page_boundary = (new_brk + ((SNAPSHOT_PAGE_SIZE - 1) as GuestAddr))
+-                    & (!(SNAPSHOT_PAGE_SIZE - 1) as GuestAddr);
+-                let old_page_boundary = (self.brk + ((SNAPSHOT_PAGE_SIZE - 1) as GuestAddr))
+-                    & (!(SNAPSHOT_PAGE_SIZE - 1) as GuestAddr);
+-
+-                if new_page_boundary != old_page_boundary {
+-                    let unmap_sz = (new_page_boundary - old_page_boundary) as usize;
+-                    // if self.brk is not aligned this call will return an error
+-                    // and it will page align this unmap_sz too (but it is already aligned for us)
+-                    // look at target_munmap in qemu-libafl-bridge
+-                    qemu.unmap(self.brk, unmap_sz).unwrap();
+-                }
++        log::debug!("Start restore");
++
++        let new_brk = qemu.get_brk();
++        if new_brk < self.brk {
++            // The heap has shrunk below the snapshotted brk value. We need to remap those pages in the target.
++            // The next for loop will restore their content if needed.
++            let aligned_new_brk = (new_brk + ((SNAPSHOT_PAGE_SIZE - 1) as GuestAddr))
++                & (!(SNAPSHOT_PAGE_SIZE - 1) as GuestAddr);
++            log::debug!(
++                "New brk ({:#x?}) < snapshotted brk ({:#x?})! Mapping back in the target {:#x?} - {:#x?}",
++                new_brk,
++                self.brk,
++                aligned_new_brk,
++                aligned_new_brk + (self.brk - aligned_new_brk)
++            );
++            qemu.map_fixed(
++                aligned_new_brk,
++                (self.brk - aligned_new_brk) as usize,
++                MmapPerms::ReadWrite,
++            )
++            .unwrap();
++        } else if new_brk > self.brk {
++            // The heap has grown. so we want to drop those
++            // we want to align the addresses before calling unmap
++            // although it is very unlikely that the brk has an unaligned value
++            let new_page_boundary = (new_brk + ((SNAPSHOT_PAGE_SIZE - 1) as GuestAddr))
++                & (!(SNAPSHOT_PAGE_SIZE - 1) as GuestAddr);
++            let old_page_boundary = (self.brk + ((SNAPSHOT_PAGE_SIZE - 1) as GuestAddr))
++                & (!(SNAPSHOT_PAGE_SIZE - 1) as GuestAddr);
++
++            if new_page_boundary != old_page_boundary {
++                let unmap_sz = (new_page_boundary - old_page_boundary) as usize;
++                // if self.brk is not aligned this call will return an error
++                // and it will page align this unmap_sz too (but it is already aligned for us)
++                // look at target_munmap in qemu-libafl-bridge
++                qemu.unmap(self.brk, unmap_sz).unwrap();
+             }
++        }
+ 
+-            for acc in &mut self.accesses {
+-                unsafe { &mut (*acc.get()) }.dirty.retain(|page| {
+-                    if let Some(info) = self.pages.get_mut(page) {
+-                        if self.interval_filter.to_zero(u64::from(*page)).is_some() {
+-                            if !Self::modify_mapping(qemu, new_maps, *page) {
+-                                return true; // Restore later
+-                            }
+-                            unsafe { qemu.write_mem_unchecked(*page, &SNAPSHOT_PAGE_ZEROES) };
+-                        } else if let Some(data) = info.data.as_ref() {
+-                            // TODO avoid duplicated memcpy
+-                            // Change segment perms to RW if not writeable in current mapping
+-                            if !Self::modify_mapping(qemu, new_maps, *page) {
+-                                return true; // Restore later
+-                            }
++        let new_maps = self.new_maps.get_mut().unwrap();
+ 
+-                            unsafe { qemu.write_mem_unchecked(*page, &data[..]) };
+-                        } else {
+-                            panic!("Cannot restored a dirty but unsaved page");
++        for acc in &mut self.accesses {
++            unsafe { &mut (*acc.get()) }.dirty.retain(|page| {
++                if let Some(info) = self.pages.get_mut(page) {
++                    if self.interval_filter.to_zero(u64::from(*page)).is_some() {
++                        if !Self::modify_mapping(qemu, new_maps, *page) {
++                            return true; // Restore later
+                         }
++                        unsafe { qemu.write_mem_unchecked(*page, &SNAPSHOT_PAGE_ZEROES) };
++                    } else if let Some(data) = info.data.as_ref() {
++                        // TODO avoid duplicated memcpy
++                        // Change segment perms to RW if not writeable in current mapping
++                        if !Self::modify_mapping(qemu, new_maps, *page) {
++                            return true; // Restore later
++                        }
++
++                        unsafe { qemu.write_mem_unchecked(*page, &data[..]) };
++                    } else {
++                        panic!("Cannot restored a dirty but unsaved page");
+                     }
+-                    false
+-                });
+-            }
++                }
++                false
++            });
+         }
+ 
+         self.reset_maps(qemu);
+@@ -736,6 +747,13 @@ impl SnapshotModule {
+                     entry.value.perms.unwrap(),
+                 )
+                 .unwrap();
++                let mut addr = entry.interval.start;
++                while addr < entry.interval.end {
++                    let info = self.pages.get_mut(&addr).unwrap();
++                    let data = info.data.as_ref().unwrap();
++                    unsafe { qemu.write_mem_unchecked(addr, &data[..]) };
++                    addr += SNAPSHOT_PAGE_SIZE as u64;
++                }
+             } else if found.len() == 1 && found[0].0 == *entry.interval {
+                 if found[0].1 && found[0].2 != entry.value.perms {
+                     qemu.mprotect(
+@@ -746,6 +764,36 @@ impl SnapshotModule {
+                     .unwrap();
+                 }
+             } else {
++                if entry.interval.start < found[0].0.start {
++                    qemu.map_fixed(
++                        entry.interval.start as GuestAddr,
++                        (found[0].0.start - entry.interval.start) as usize,
++                        entry.value.perms.unwrap(),
++                    )
++                    .unwrap();
++                    let mut addr = entry.interval.start;
++                    while addr < found[0].0.start {
++                        let info = self.pages.get_mut(&addr).unwrap();
++                        let data = info.data.as_ref().unwrap();
++                        unsafe { qemu.write_mem_unchecked(addr, &data[..]) };
++                        addr += SNAPSHOT_PAGE_SIZE as u64;
++                    }
++                }
++                if entry.interval.end > found[0].0.end {
++                    qemu.map_fixed(
++                        found[0].0.end as GuestAddr,
++                        (entry.interval.end - found[0].0.end) as usize,
++                        entry.value.perms.unwrap(),
++                    )
++                    .unwrap();
++                    let mut addr = found[0].0.end;
++                    while addr < entry.interval.end {
++                        let info = self.pages.get_mut(&addr).unwrap();
++                        let data = info.data.as_ref().unwrap();
++                        unsafe { qemu.write_mem_unchecked(addr, &data[..]) };
++                        addr += SNAPSHOT_PAGE_SIZE as u64;
++                    }
++                }
+                 //  TODO check for holes
+                 qemu.mprotect(
+                     entry.interval.start as GuestAddr,
+@@ -820,6 +868,7 @@ where
+         if self.empty {
+             self.snapshot(qemu);
+         } else if self.auto_reset {
++            // println!("we here ?");
+             self.reset(qemu);
+         }
+     }

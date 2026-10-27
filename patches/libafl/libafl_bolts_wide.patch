@@ -1,0 +1,45 @@
+diff --git a/crates/libafl_bolts/src/simd.rs b/crates/libafl_bolts/src/simd.rs
+index 4888ac47..35d3ec8c 100644
+--- a/crates/libafl_bolts/src/simd.rs
++++ b/crates/libafl_bolts/src/simd.rs
+@@ -5,6 +5,7 @@ use alloc::{vec, vec::Vec};
+ use core::ops::{BitAnd, BitOr};
+ 
+ #[cfg(feature = "wide")]
++#[allow(deprecated)]
+ use wide::CmpEq;
+ 
+ /// Re-export our vector types
+@@ -254,6 +255,7 @@ impl VectorType for wide::u8x16 {
+         }
+     }
+ 
++    #[allow(deprecated)]
+     fn blend(self, lhs: Self, rhs: Self) -> Self {
+         self.blend(lhs, rhs)
+     }
+@@ -295,6 +297,7 @@ impl VectorType for wide::u8x32 {
+         }
+     }
+ 
++    #[allow(deprecated)]
+     fn blend(self, lhs: Self, rhs: Self) -> Self {
+         self.blend(lhs, rhs)
+     }
+@@ -314,6 +317,7 @@ pub fn simplify_map_naive(map: &mut [u8]) {
+ /// `simplify_map` implementation by u8x16, worse performance compared to LLVM
+ /// auto-vectorization but faster if LLVM doesn't vectorize.
+ #[cfg(feature = "wide")]
++#[allow(deprecated)]
+ pub fn simplify_map_simd<V>(map: &mut [u8])
+ where
+     V: VectorType + Copy + Eq + CmpEq<Output = V>,
+@@ -327,7 +331,7 @@ where
+     for step in 0..steps {
+         let i = step * V::N;
+         let mp = V::from_slice(&map[i..]);
+-
++#[allow(deprecated)]
+         let mask = mp.simd_eq(V::ZERO);
+         let out = mask.blend(lhs, rhs);
+         map[i..i + V::N].copy_from_slice(out.as_slice());

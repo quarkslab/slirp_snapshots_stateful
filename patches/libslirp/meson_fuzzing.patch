@@ -1,0 +1,29 @@
+diff --git a/fuzzing/meson.build b/fuzzing/meson.build
+index f1efe0f..f433bf5 100644
+--- a/fuzzing/meson.build
++++ b/fuzzing/meson.build
+@@ -17,6 +17,11 @@ if fuzzer_build
+   extra_ldargs += '-fcoverage-mapping'
+ endif
+ 
++if fuzz_qemu
++  extra_cargs += '-fsanitize=unsigned-integer-overflow,signed-integer-overflow'
++  extra_ldargs += '-fsanitize=unsigned-integer-overflow,signed-integer-overflow'
++endif
++
+ deps = [ libslirp_libdep ] + libslirp_deps
+ 
+ exes = [
+@@ -62,3 +67,12 @@ if fuzz_reproduce
+     link_args: extra_ldargs,
+   )
+ endif
++
++if fuzz_qemu
++  executable(['qemu-target', ['qemu_target.c']],
++    dependencies: deps,
++    c_args: extra_cargs,
++    link_args: extra_ldargs,
++  )
++endif
++

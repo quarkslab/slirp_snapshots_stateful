@@ -1,0 +1,33 @@
+diff --git a/crates/libafl_qemu/src/emu/snapshot.rs b/crates/libafl_qemu/src/emu/snapshot.rs
+index fc29b1b9..cd64b789 100644
+--- a/crates/libafl_qemu/src/emu/snapshot.rs
++++ b/crates/libafl_qemu/src/emu/snapshot.rs
+@@ -3,6 +3,8 @@ use std::{
+     sync::atomic::{AtomicU64, Ordering},
+ };
+ 
++use serde::{Deserialize, Serialize};
++
+ use crate::Qemu;
+ 
+ pub trait IsSnapshotManager: Clone + Debug {
+@@ -84,7 +86,7 @@ impl IsSnapshotManager for NopSnapshotManager {
+     }
+ }
+ 
+-#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
++#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone, Deserialize, Serialize)]
+ pub struct SnapshotId {
+     id: u64,
+ }
+@@ -108,6 +110,10 @@ impl QemuSnapshotCheckResult {
+ }
+ 
+ impl SnapshotId {
++    pub fn new_from_id(id: u64) -> SnapshotId {
++        SnapshotId { id }
++    }
++
+     pub fn gen_unique_id() -> SnapshotId {
+         static UNIQUE_ID: AtomicU64 = AtomicU64::new(0);
+ 

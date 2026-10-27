@@ -1,0 +1,12 @@
+diff --git a/src/tcp_output.c b/src/tcp_output.c
+index 77c1204a..369b970c 100644
+--- a/src/tcp_output.c
++++ b/src/tcp_output.c
+@@ -51,6 +51,7 @@ static const uint8_t tcp_outflags[TCP_NSTATES] = {
+ /*
+  * Tcp output routine: figure out what should be sent and send it.
+  */
++__attribute__((no_sanitize("unsigned-integer-overflow")))
+ int tcp_output(struct tcpcb *tp)
+ {
+     register struct socket *so = tp->t_socket;

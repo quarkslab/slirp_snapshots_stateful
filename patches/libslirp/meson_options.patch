@@ -1,0 +1,16 @@
+diff --git a/meson_options.txt b/meson_options.txt
+index 72d8b71..002bbe5 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -10,7 +10,10 @@ option('llvm-fuzz', type : 'boolean', value : false,
+ option('fuzz-reproduce', type : 'boolean', value : false,
+        description : 'build a standalone executable to reproduce fuzz cases')
+ 
+-option('static', type : 'boolean', value : false,
++option('fuzz-qemu', type : 'boolean', value : true,
++       description : 'build a standalone executable to fuzz inside qemu')
++
++option('static', type : 'boolean', value : true,
+        description : 'build static binary, only for debugging, otherwise rather use --default-library static')
+ 
+ option('target_winver', type : 'string', value: '',

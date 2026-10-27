@@ -1,0 +1,226 @@
+diff --git a/fuzzing/qemu_target.c b/fuzzing/qemu_target.c
+new file mode 100644
+index 0000000..6aababa
+--- /dev/null
++++ b/fuzzing/qemu_target.c
+@@ -0,0 +1,220 @@
++#ifdef _WIN32
++/* as defined in sdkddkver.h */
++#ifndef _WIN32_WINNT
++#define _WIN32_WINNT 0x0600 /* Vista */
++#endif
++#include <ws2tcpip.h>
++#endif
++
++#include <glib.h>
++#include <stdlib.h>
++#include "../src/libslirp.h"
++#include "../src/ip6.h"
++#include "helper.h"
++
++#define MIN_NUMBER_OF_RUNS 1
++#define EXIT_TEST_SKIP 77
++
++int fuzz_me(Slirp *slirp, const uint8_t *data, size_t size);
++
++struct in6_addr ip6_host;
++struct in6_addr ip6_dns;
++
++int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
++{
++    /* FIXME: fail on some addr? */
++    return 0;
++}
++
++int listen(int sockfd, int backlog)
++{
++    return 0;
++}
++
++int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
++{
++    /* FIXME: fail on some addr? */
++    return 0;
++}
++
++ssize_t send(int sockfd, const void *buf, size_t len, int flags)
++{
++    /* FIXME: partial send? */
++    return len;
++}
++
++ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
++               const struct sockaddr *dest_addr, socklen_t addrlen)
++{
++    /* FIXME: partial send? */
++    return len;
++}
++
++ssize_t recv(int sockfd, void *buf, size_t len, int flags)
++{
++    memset(buf, 0, len);
++    return len / 2;
++}
++
++ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
++                 struct sockaddr *src_addr, socklen_t *addrlen)
++{
++    memset(buf, 0, len);
++    memset(src_addr, 0, *addrlen);
++    return len / 2;
++}
++
++int setsockopt(int sockfd, int level, int optname, const void *optval,
++               socklen_t optlen)
++{
++    return 0;
++}
++
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++static void empty_logging_func(const gchar *log_domain,
++                               GLogLevelFlags log_level, const gchar *message,
++                               gpointer user_data)
++{
++}
++#endif
++
++/* Disables logging for oss-fuzz. Must be used with each target. */
++static void fuzz_set_logging_func(void)
++{
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++    g_log_set_default_handler(empty_logging_func, NULL);
++#endif
++}
++
++
++static ssize_t send_packet(const void *pkt, size_t pkt_len, void *opaque)
++{
++    return pkt_len;
++}
++
++static int64_t clock_get_ns(void *opaque)
++{
++    return 0;
++}
++
++static void *timer_new(SlirpTimerCb cb, void *cb_opaque, void *opaque)
++{
++    return NULL;
++}
++
++static void timer_mod(void *timer, int64_t expire_timer, void *opaque)
++{
++}
++
++static void timer_free(void *timer, void *opaque)
++{
++}
++
++static void guest_error(const char *msg, void *opaque)
++{
++}
++
++static void register_poll_socket(slirp_os_socket fd, void *opaque)
++{
++}
++
++static void unregister_poll_socket(slirp_os_socket fd, void *opaque)
++{
++}
++
++static void notify(void *opaque)
++{
++}
++
++static const SlirpCb slirp_cb = {
++    .send_packet = send_packet,
++    .guest_error = guest_error,
++    .clock_get_ns = clock_get_ns,
++    .timer_new = timer_new,
++    .timer_mod = timer_mod,
++    .timer_free = timer_free,
++    .register_poll_socket = register_poll_socket,
++    .unregister_poll_socket = unregister_poll_socket,
++    .notify = notify,
++};
++
++#define MAX_EVID 1024
++static int fake_events[MAX_EVID];
++
++static int add_poll_cb(slirp_os_socket fd, int events, void *opaque)
++{
++    g_assert(fd < G_N_ELEMENTS(fake_events));
++    fake_events[fd] = events;
++    return fd;
++}
++
++static int get_revents_cb(int idx, void *opaque)
++{
++    return fake_events[idx] & ~(SLIRP_POLL_ERR | SLIRP_POLL_HUP);
++}
++
++
++int fuzz_me(Slirp *slirp, const uint8_t *data, size_t size)
++{
++    uint32_t timeout = 0;
++
++    slirp_input(slirp, data, size);
++    slirp_pollfds_fill_socket(slirp, &timeout, add_poll_cb, NULL);
++    slirp_pollfds_poll(slirp, 0, get_revents_cb, NULL);
++
++    return 0;
++}
++
++
++int main(int argc, char **argv)
++{
++    Slirp *slirp = NULL;
++    struct in_addr net = { .s_addr = htonl(0x0a000200) }; /* 10.0.2.0 */
++    struct in_addr mask = { .s_addr = htonl(0xffffff00) }; /* 255.255.255.0 */
++    struct in_addr host = { .s_addr = htonl(0x0a000202) }; /* 10.0.2.2 */
++    struct in_addr fwd = { .s_addr = htonl(0x0a000205) }; /* 10.0.2.5 */
++    struct in_addr dhcp = { .s_addr = htonl(0x0a00020f) }; /* 10.0.2.15 */
++    struct in_addr dns = { .s_addr = htonl(0x0a000203) }; /* 10.0.2.3 */
++    struct in6_addr ip6_prefix;
++    int ret, vprefix6_len;
++
++    fuzz_set_logging_func();
++
++    ret = inet_pton(AF_INET6, "fec0::", &ip6_prefix);
++    vprefix6_len = 64;
++
++    ip6_host = ip6_prefix;
++    ip6_host.s6_addr[15] |= 2;
++    ip6_dns = ip6_prefix;
++    ip6_dns.s6_addr[15] |= 3;
++
++    SlirpConfig cfg = {
++        .version = 6,
++        .restricted = false,
++        .in_enabled = true,
++        .vnetwork = net,
++        .vnetmask = mask,
++        .vhost = host,
++        .in6_enabled = true,
++        .vprefix_addr6 = ip6_prefix,
++        .vprefix_len = vprefix6_len,
++        .vhost6 = ip6_host,
++        .tftp_path = "fuzzing/tftp",
++        .vdhcp_start = dhcp,
++        .vnameserver = dns,
++        .vnameserver6 = ip6_dns,
++    };
++    slirp = slirp_new(&cfg, &slirp_cb, NULL);
++
++    slirp_add_exec(slirp, "cat", &fwd, 1234);
++
++    uint8_t buf[10] = { 0 };
++
++    while (1) {
++        fuzz_me(slirp, (void *)buf, 10);
++    }
++
++    slirp_cleanup(slirp);
++
++    return EXIT_SUCCESS;
++}

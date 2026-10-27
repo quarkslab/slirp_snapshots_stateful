@@ -1,0 +1,12 @@
+diff --git a/src/tcp_input.c b/src/tcp_input.c
+index 0fe0075..7e94551 100644
+--- a/src/tcp_input.c
++++ b/src/tcp_input.c
+@@ -170,6 +170,7 @@ present:
+  * TCP input routine, follows pages 65-76 of the
+  * protocol specification dated September, 1981 very closely.
+  */
++__attribute__((no_sanitize("unsigned-integer-overflow")))
+ void tcp_input(struct mbuf *m, int iphlen, struct socket *inso,
+                unsigned short af)
+ {

@@ -1,0 +1,35 @@
+diff --git a/meson.build b/meson.build
+index 37aa88e..44de0ed 100644
+--- a/meson.build
++++ b/meson.build
+@@ -19,6 +19,7 @@ conf.set('SLIRP_MICRO_VERSION', micro_version)
+ want_ossfuzz = get_option('oss-fuzz')
+ want_libfuzzer = get_option('llvm-fuzz')
+ fuzz_reproduce = get_option('fuzz-reproduce')
++fuzz_qemu = get_option('fuzz-qemu')
+ target_winver = get_option('target_winver')
+ if want_ossfuzz and want_libfuzzer
+   error('only one of oss-fuzz and llvm-fuzz can be specified')
+@@ -189,6 +190,13 @@ if fuzz_reproduce
+   cargs += '-DSLIRP_DEBUG'
+   cargs += '-g'
+ endif
++if fuzz_qemu
++  cargs += '-DSLIRP_DEBUG'
++  cargs += '-g'
++  cargs += '-fsanitize=unsigned-integer-overflow,signed-integer-overflow'
++  cargs += '-fsanitize-trap=unsigned-integer-overflow,signed-integer-overflow'
++  vflag += '-fsanitize=unsigned-integer-overflow,signed-integer-overflow'
++endif
+ 
+ install_devel = not meson.is_subproject()
+ 
+@@ -200,7 +208,7 @@ configure_file(
+   configuration : conf
+ )
+ 
+-if glib_static or fuzzer_build or fuzz_reproduce
++if glib_static or fuzzer_build or fuzz_reproduce or fuzz_qemu
+   lib = static_library('slirp', sources,
+     c_args : cargs,
+     link_args : libvflag + vflag,
